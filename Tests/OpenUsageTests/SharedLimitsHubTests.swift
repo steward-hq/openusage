@@ -105,32 +105,4 @@ final class SharedLimitsHubTests: XCTestCase {
         try Data("invalid".utf8).write(to: file)
         XCTAssertThrowsError(try SharedLimitsHubConfiguration.load(providerID: "muse", home: home))
     }
-
-    func testConfigurationMigratesOnlyKnownLegacyHubEndpoints() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let folder = home.appendingPathComponent(".openusage")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: home) }
-        let file = folder.appendingPathComponent("limits-hub.json")
-
-        for endpoint in [
-            "https://devbox-moshe.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-nir.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-joon.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-michael.tailbfbe9a.ts.net:4410/snapshot.json"
-        ] {
-            try Data(#"{"snapshotURL":"\#(endpoint)","providers":["muse"]}"#.utf8).write(to: file)
-            let config = try XCTUnwrap(SharedLimitsHubConfiguration.load(providerID: "muse", home: home))
-            XCTAssertEqual(config.snapshotURL.port, 4477)
-        }
-
-        for endpoint in [
-            "https://custom.example:4401/snapshot.json",
-            "https://devbox-moshe.tailbfbe9a.ts.net:4401/custom.json"
-        ] {
-            try Data(#"{"snapshotURL":"\#(endpoint)","providers":["muse"]}"#.utf8).write(to: file)
-            let config = try XCTUnwrap(SharedLimitsHubConfiguration.load(providerID: "muse", home: home))
-            XCTAssertEqual(config.snapshotURL.absoluteString, endpoint)
-        }
-    }
 }

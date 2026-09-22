@@ -18,28 +18,8 @@ struct SharedLimitsHubConfiguration: Codable, Sendable {
                   config.snapshotURL.user == nil, config.snapshotURL.password == nil,
                   config.resetTimeZone.map({ TimeZone(identifier: $0) != nil }) ?? true
             else { throw SharedLimitsHubError.configuration }
-            return Self(
-                snapshotURL: migratedSnapshotURL(config.snapshotURL),
-                providers: config.providers,
-                resetTimeZone: config.resetTimeZone
-            )
+            return config
         } catch { throw SharedLimitsHubError.configuration }
-    }
-
-    /// The personal AI Limits hubs moved to one dedicated port. Keep existing Mac config working
-    /// without rewriting unrelated endpoints that happen to use either former development port.
-    private static func migratedSnapshotURL(_ url: URL) -> URL {
-        let legacyEndpoints: Set<String> = [
-            "https://devbox-moshe.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-nir.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-joon.tailbfbe9a.ts.net:4401/snapshot.json",
-            "https://devbox-michael.tailbfbe9a.ts.net:4410/snapshot.json"
-        ]
-        guard legacyEndpoints.contains(url.absoluteString),
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        else { return url }
-        components.port = 4477
-        return components.url ?? url
     }
 }
 

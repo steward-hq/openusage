@@ -229,14 +229,29 @@ PLIST
 
 if [ "$UNSIGNED" = "1" ]; then
   # No provisioning profile and no iCloud entitlement — both need a Developer ID team, so iCloud Sync
-  # is unavailable in this build. --timestamp is dropped too (a secure timestamp needs a real
-  # identity), but the hardened runtime stays on so the bundle matches the signed layout.
-  echo "==> signing app (ad-hoc, hardened runtime)"
-  "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" "--options runtime"
-  codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
+  # is unavailable in this build. Critically, the hardened runtime is NOT enabled either: it turns on
+  # library validation, which requires every loaded library to share the main binary's Team ID. Ad-hoc
+  # signatures have no Team ID, so a hardened ad-hoc app cannot load the ad-hoc Sparkle.framework —
+  # dyld refuses it with "different Team IDs" and the app dies at launch. --timestamp is dropped too
+  # (a secure timestamp needs a real identity).
+  echo "==> signing app (ad-hoc, no hardened runtime)"
+  "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" ""
+  codesign --force --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
   # Not --deep: the Sparkle framework is signed above and must keep that signature.
-  codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+  codesign --force --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
   codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+
+  # Guard both halves of the failure above, because a signature that verifies can still be unlaunchable.
+  # 1. The runtime flag must be absent, or library validation comes back.
+  if codesign -d --verbose=2 "$APP_BUNDLE" 2>&1 | grep -q "flags=.*runtime"; then
+    echo "ad-hoc build has the hardened runtime enabled — it would fail to load Sparkle." >&2
+    exit 1
+  fi
+  # 2. Actually load the framework. The CLI helper links Sparkle through the same @rpath as the app, so
+  #    `--version` (no network, no GUI) fails here exactly when the app would die at launch in dyld.
+  echo "==> smoke-testing the embedded framework"
+  "$CLI_BINARY" --version >/dev/null \
+    || { echo "the staged CLI could not launch — check the Sparkle embedding/signature above." >&2; exit 1; }
 else
   cp "$ICLOUD_PROVISIONING_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
   "$ROOT_DIR/script/render_icloud_entitlements.sh" \

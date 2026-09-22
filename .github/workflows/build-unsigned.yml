@@ -18,6 +18,9 @@ on:
         description: "Version baked into the bundle (default: derived from the ref)"
         required: false
         type: string
+  # TEMPORARY: re-verify on this branch (workflow_dispatch only works once this is on main).
+  push:
+    branches: [ci/unsigned-build]
 
 permissions:
   contents: read

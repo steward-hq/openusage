@@ -18,9 +18,6 @@ on:
         description: "Version baked into the bundle (default: derived from the ref)"
         required: false
         type: string
-  # TEMPORARY: verify the workflow on its own branch before it exists on main.
-  push:
-    branches: [ci/unsigned-build]
 
 permissions:
   contents: read

@@ -77,6 +77,21 @@ swift test             # run the test suite
 ./script/build_and_run.sh   # build and launch the dev app from dist/ (no install)
 ```
 
+Building requires a full Xcode install, not just the Command Line Tools: SwiftUI's `@Entry` macro
+plugin ships only inside `Xcode.app`, and a dependency uses it. If `swift build` fails with
+`plugin for module 'SwiftUIMacros' not found`, point the toolchain at Xcode and build again:
+
+```sh
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+rm -rf .build && swift build
+```
+
+To hand a build to someone who does not want to compile it, run the **Build (unsigned)** workflow
+instead — it produces an installable universal `.app` zip on CI, so they need no toolchain at all. The
+build is ad-hoc signed rather than notarized, so the recipient clears Gatekeeper's quarantine once
+(`xattr -dr com.apple.quarantine /Applications/OpenUsage.app`), and it has no auto-updates or iCloud
+Sync. Locally the same build is `UNSIGNED=1 OPENUSAGE_VERSION=0.0.0-test script/release.sh`.
+
 
 
 ## Architecture

@@ -37,8 +37,8 @@ hub. Missing values remain unavailable, real zeroes remain zero, and hub failure
 while local spending and trends continue working. OpenUsage does not fall back to a second scrape.
 Data older than 30 minutes is unavailable until the hub collector updates it.
 
-The personal hubs formerly served on ports `4401` and `4410` now use `4477`. Existing configs for
-the four known development boxes migrate automatically; custom hosts and paths remain unchanged.
+Each person runs their own hub: the snapshot reports one browser session's quotas, so point
+`snapshotURL` at your own collector. Hubs serve port `4477`; the URL is used exactly as written.
 
 Only Muse opts into this shared client today. Its HTTPS transport, provider selection, configuration,
 and freshness checks can be reused when adding other providers; adding a name alone does not migrate

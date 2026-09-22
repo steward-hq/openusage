@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.7.12-muse.5
+
+First signed and notarized release from `steward-hq/openusage`. Rolls up everything this fork adds on top of upstream OpenUsage `70dea9a`, and ships under its own bundle id (`com.steward.openusage`) so it no longer collides with an installed upstream OpenUsage.
+
+### New Features
+- Add Muse Code provider (local session-log spend + trend) by @tomck
+- Add Muse Code provider doc page by @tomck
+- feat(muse): add dashboard-backed quota meters by @bigimot
+- Read Muse quotas from a configurable shared limits hub by @bigimot
+
+### Bug Fixes
+- fix(muse): give dashboard renderer a layout viewport by @bigimot
+- fix(muse): use Meta mark in menu bar by @bigimot
+- fix(muse): preserve sparkles icon in status strip by @bigimot
+- fix(muse): use Meta mark across provider surfaces by @bigimot
+- fix(muse): render complete Meta provider mark by @bigimot
+- fix(muse): migrate legacy shared hub endpoints by @bigimot
+- fix(muse): throttle dashboard quota refreshes by @bigimot
+
+### Chores
+- docs(muse): document dashboard quota source by @bigimot
+- test(muse): use portable fixture paths by @bigimot
+- ci: test Muse shared hub changes by @bigimot
+- ci: drop muse-shared-hub scaffolding trigger by @bigimot
+- chore(muse): standardize hubs on port 4477 ([#3](https://github.com/steward-hq/openusage/pull/3)) by @bigimot
+- ci: build a shareable unsigned app without an Apple Developer account ([#4](https://github.com/steward-hq/openusage/pull/4)) by @bigimot
+
+---
+
+### Changelog
+**Full Changelog**: [70dea9a...v0.7.12-muse.5](https://github.com/steward-hq/openusage/compare/70dea9a...v0.7.12-muse.5)
+
+- [0c951fe](https://github.com/steward-hq/openusage/commit/0c951fe) Add Muse Code provider (local session-log spend + trend) by @tomck
+- [57626d4](https://github.com/steward-hq/openusage/commit/57626d4) Add Muse Code provider doc page by @tomck
+- [9fd3b54](https://github.com/steward-hq/openusage/commit/9fd3b54) feat(muse): add dashboard-backed quota meters by @bigimot
+- [a4a8b5d](https://github.com/steward-hq/openusage/commit/a4a8b5d) docs(muse): document dashboard quota source by @bigimot
+- [a5cee86](https://github.com/steward-hq/openusage/commit/a5cee86) fix(muse): give dashboard renderer a layout viewport by @bigimot
+- [0d54a24](https://github.com/steward-hq/openusage/commit/0d54a24) test(muse): use portable fixture paths by @bigimot
+- [58c20b6](https://github.com/steward-hq/openusage/commit/58c20b6) fix(muse): use Meta mark in menu bar by @bigimot
+- [a90fc8c](https://github.com/steward-hq/openusage/commit/a90fc8c) fix(muse): preserve sparkles icon in status strip by @bigimot
+- [2ebcc8d](https://github.com/steward-hq/openusage/commit/2ebcc8d) fix(muse): use Meta mark across provider surfaces by @bigimot
+- [9768e8c](https://github.com/steward-hq/openusage/commit/9768e8c) fix(muse): render complete Meta provider mark by @bigimot
+- [242c8c8](https://github.com/steward-hq/openusage/commit/242c8c8) Read Muse quotas from a configurable shared limits hub by @bigimot
+- [ef84b93](https://github.com/steward-hq/openusage/commit/ef84b93) fix(muse): migrate legacy shared hub endpoints by @bigimot
+- [34a18ad](https://github.com/steward-hq/openusage/commit/34a18ad) ci: test Muse shared hub changes by @bigimot
+- [fa85135](https://github.com/steward-hq/openusage/commit/fa85135) fix(muse): throttle dashboard quota refreshes by @bigimot
+- [793cc18](https://github.com/steward-hq/openusage/commit/793cc18) ci: drop muse-shared-hub scaffolding trigger by @bigimot
+- [87009ab](https://github.com/steward-hq/openusage/commit/87009ab) chore(muse): standardize hubs on port 4477 by @bigimot
+- [59764f9](https://github.com/steward-hq/openusage/commit/59764f9) ci: build a shareable unsigned app without an Apple Developer account by @bigimot
+
 ## v0.7.11
 
 ### New Features

@@ -203,7 +203,10 @@ private struct MenuBarTextStrip: View {
                 .fill(Color.black)
                 .frame(width: Self.glyphSide, height: Self.glyphSide)
         } else {
-            Circle().fill(Color.black).frame(width: Self.glyphSide - 1, height: Self.glyphSide - 1)
+            Image(systemName: ProviderMarks.symbolFallback(for: icon.providerID))
+                .resizable()
+                .scaledToFit()
+                .frame(width: Self.glyphSide, height: Self.glyphSide)
         }
     }
 }

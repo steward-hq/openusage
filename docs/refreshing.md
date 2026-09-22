@@ -3,8 +3,9 @@
 ## When data updates
 
 - All enabled providers refresh together: once at launch, then every 5 minutes (a fixed cadence — there's no setting for it). Opening the popover does not start a second automatic pass. Providers fetch in parallel, so fast cards update without waiting for a slow one. The batch itself still finishes only after every provider returns; notifications, history sync, and the next five-minute wait begin after that point.
+- Muse's direct Meta dashboard source is rate-limited separately: its last successful quota result is reused for 30 minutes, and failed reads are not retried during that interval, while local Muse logs still update on the normal five-minute pass. Relaunching the app performs one fresh dashboard read. A configured shared hub follows the same 30-minute quota-source policy.
 - Turning a provider on (yourself in Customize, or automatically by first-launch/new-provider detection) fetches it promptly instead of waiting out the interval — even when the change lands in the middle of a refresh that's already running.
-- The Dashboard and Settings footer shows `Next update in Nm`. **Clicking it (or pressing ⌘R while that footer is present)** refreshes immediately, skipping the cache.
+- The Dashboard and Settings footer shows `Next update in Nm`. **Clicking it (or pressing ⌘R while that footer is present)** refreshes immediately, skipping the normal snapshot cache. Muse's direct dashboard source remains subject to its separate 30-minute safety interval.
 - The one-shot `openusage` command reuses this same persisted cache for five minutes, refreshes missing or stale entries without starting the app, and exits. `openusage --force` runs the same forced provider refresh as ⌘R regardless of cache age.
 - While a provider is fetching, a small spinner appears next to its name (and one shows in the footer beside the countdown), so you can tell a refresh is in flight rather than wondering if the numbers are stale.
 - With [iCloud Sync](icloud-sync.md) on, a refresh batch writes one machine-history file after the whole

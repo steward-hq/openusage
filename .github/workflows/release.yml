@@ -17,6 +17,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # This fork ships under its own identifier so it never collides with an installed upstream
+  # OpenUsage — a shared bundle id means shared preferences, keychain grants, and update feed.
+  BUNDLE_ID: com.steward.openusage
+
 # Serialize releases: each run reads appcast.xml from gh-pages, regenerates it with generate_appcast,
 # and force-publishes the branch. Without this, two tags pushed close together could race and drop a
 # feed entry.
@@ -72,10 +77,18 @@ jobs:
           [ -n "$IDENTITY" ] || { echo "No Developer ID Application identity found in the imported cert" >&2; exit 1; }
           echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
+      # Sparkle (auto-updates) and iCloud Sync each need a credential this repo may not hold. Without
+      # one, the release still ships — it just omits that feature, and says so in the log — instead of
+      # failing at the signing step. The Developer ID cert above stays mandatory.
       - name: Write Sparkle private key
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::warning::SPARKLE_PRIVATE_KEY not set — building without auto-updates; no appcast will be published."
+            echo "SKIP_SPARKLE=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_ed_private_key"
           echo "SPARKLE_PRIVATE_KEY_FILE=$RUNNER_TEMP/sparkle_ed_private_key" >> "$GITHUB_ENV"
 
@@ -83,10 +96,16 @@ jobs:
         env:
           ICLOUD_PROFILE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_ICLOUD_PROFILE }}
         run: |
+          if [ -z "$ICLOUD_PROFILE_BASE64" ]; then
+            echo "::warning::APPLE_DEVELOPER_ID_ICLOUD_PROFILE not set — building without iCloud Sync."
+            echo "SKIP_ICLOUD=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           printf '%s' "$ICLOUD_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/openusage-icloud.provisionprofile"
           echo "ICLOUD_PROVISIONING_PROFILE=$RUNNER_TEMP/openusage-icloud.provisionprofile" >> "$GITHUB_ENV"
 
       - name: Carry forward the existing appcast
+        if: env.SKIP_SPARKLE != '1'
         run: |
           # generate_appcast works on a folder: it reads the existing appcast.xml there and the new DMG,
           # then writes a merged appcast. "feed/" is that folder. Seed it with the live appcast so prior
@@ -154,7 +173,9 @@ jobs:
           files: dist/OpenUsage-${{ steps.meta.outputs.version }}.dmg
 
       - name: Preserve Tauri updater manifest on stable releases
-        if: steps.meta.outputs.channel == 'stable'
+        # Upstream-only: the 0.6.x Tauri installs that read latest.json exist there, and a fork has no
+        # v0.6.28 release to copy it from.
+        if: steps.meta.outputs.channel == 'stable' && github.repository == 'robinebers/openusage'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -166,6 +187,7 @@ jobs:
           gh release upload "$TAG" "$tmpdir/latest.json" --clobber
 
       - name: Generate appcast with Sparkle
+        if: env.SKIP_SPARKLE != '1'
         env:
           DMG: OpenUsage-${{ steps.meta.outputs.version }}.dmg
           CHANNEL: ${{ steps.meta.outputs.channel }}
@@ -207,11 +229,13 @@ jobs:
           echo "Appcast OK: $before -> $after items."
 
       - name: Assemble Pages directory
+        if: env.SKIP_SPARKLE != '1'
         run: |
           mkdir -p public
           cp feed/appcast.xml public/appcast.xml
 
       - name: Publish appcast to GitHub Pages
+        if: env.SKIP_SPARKLE != '1'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

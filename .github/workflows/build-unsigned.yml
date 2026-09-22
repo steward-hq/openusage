@@ -1,0 +1,80 @@
+name: Build (unsigned)
+
+# Builds a shareable universal OpenUsage.app with no Apple Developer account and attaches it as a zip.
+# Use it to hand a build to someone instead of making them install Xcode and compile from source.
+#
+# The result is ad-hoc signed and NOT notarized, so macOS quarantines it: the recipient has to run
+# `xattr -dr com.apple.quarantine /Applications/OpenUsage.app` once, iCloud Sync is unavailable, and
+# there are no Sparkle auto-updates. Once the repo has Developer ID + notarization secrets, release.yml
+# supersedes this workflow for anything user-facing.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to build (default: the default branch)"
+        required: false
+        type: string
+      version:
+        description: "Version baked into the bundle (default: derived from the ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned universal app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0          # full history so the CFBundleVersion (commit count) is correct
+          persist-credentials: false
+
+      - name: Select Xcode
+        # Must be Xcode's toolchain, not the Command Line Tools: SwiftUI's @Entry macro plugin
+        # (libSwiftUIMacros.dylib, used by the KeyboardShortcuts dependency) ships only inside
+        # Xcode.app, and the build fails without it. Same reason release.yml selects Xcode.
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Resolve version
+        id: meta
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            case "$GITHUB_REF" in
+              refs/tags/*) VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#v}" ;;
+              *)           VERSION="0.0.0-$(git rev-parse --short HEAD)" ;;
+            esac
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          UNSIGNED: "1"
+          OPENUSAGE_VERSION: ${{ steps.meta.outputs.version }}
+        run: script/release.sh
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: OpenUsage-${{ steps.meta.outputs.version }}-unsigned-universal
+          path: dist/OpenUsage-${{ steps.meta.outputs.version }}-unsigned-universal.zip
+          if-no-files-found: error
+
+      - name: Install instructions
+        run: |
+          {
+            echo "## OpenUsage ${{ steps.meta.outputs.version }} — unsigned build"
+            echo
+            echo "Download the artifact below, unzip it, and move \`OpenUsage.app\` to \`/Applications\`."
+            echo "It is ad-hoc signed and **not notarized**, so macOS quarantines it. Clear that once:"
+            echo
+            echo '```sh'
+            echo 'xattr -dr com.apple.quarantine /Applications/OpenUsage.app'
+            echo '```'
+            echo
+            echo "No auto-updates and no iCloud Sync in this build — both need a Developer ID signature."
+          } >> "$GITHUB_STEP_SUMMARY"

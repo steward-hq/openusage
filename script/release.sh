@@ -7,7 +7,7 @@ set -euo pipefail
 # signs the DMG with the EdDSA key and writes/updates appcast.xml. Runs in CI (release.yml) and locally
 # on a Mac with the same env. This script does NOT push anything to GitHub.
 #
-# Required env:
+# Required env (all but OPENUSAGE_VERSION are skipped when UNSIGNED=1):
 #   CODESIGN_IDENTITY     Developer ID Application identity (name or hash)
 #   ICLOUD_PROVISIONING_PROFILE  Developer ID provisioning profile with the production iCloud container
 #   SPARKLE_PUBLIC_KEY    base64 EdDSA public key -> baked into Info.plist (SUPublicEDKey). generate_appcast
@@ -20,17 +20,48 @@ set -euo pipefail
 #                         ID for notarytool. When all three are set, the app and DMG are notarized + stapled.
 #   ALLOW_UNNOTARIZED=1   Skip notarization for a LOCAL dry run. Without it, missing notary creds is a
 #                         hard error so CI never publishes an un-notarized build.
+#   UNSIGNED=1            Build with no Apple Developer account at all: ad-hoc signature, no
+#                         notarization, no iCloud, no Sparkle feed. Output is a .zip, not a DMG
+#                         (see build-unsigned.yml). Gatekeeper blocks it until the recipient runs
+#                         `xattr -dr com.apple.quarantine`.
+#   BUNDLE_ID             Override the bundle identifier (forks; default com.robinebers.openusage).
+#   SKIP_ICLOUD=1         Sign without the iCloud container/entitlement. Needed by a fork signing with
+#                         its own Apple team, which cannot issue a profile for this repo's container.
+#                         iCloud Sync is unavailable in the resulting build.
+#   SKIP_SPARKLE=1        Ship no appcast feed or public key, so the app never checks for updates.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-: "${CODESIGN_IDENTITY:?set CODESIGN_IDENTITY to your Developer ID Application identity}"
-: "${ICLOUD_PROVISIONING_PROFILE:?set ICLOUD_PROVISIONING_PROFILE to the iCloud provisioning profile path}"
-: "${SPARKLE_PUBLIC_KEY:?set SPARKLE_PUBLIC_KEY to your base64 EdDSA public key}"
+# UNSIGNED=1 produces a shareable .app + .zip without any Apple Developer account: ad-hoc signature,
+# no notarization, no iCloud entitlement, and no Sparkle feed. Gatekeeper blocks the result on other
+# Macs until the user clears the quarantine attribute (printed at the end). Every Apple-credential
+# requirement below is skipped in that mode; the signed release path is unchanged.
+UNSIGNED="${UNSIGNED:-0}"
+# A fork signing with its own Apple team cannot use this repo's iCloud container or Sparkle feed, so
+# both are opt-out. They must be requested explicitly — never inferred from a missing credential —
+# so a misconfigured upstream release still fails loudly instead of quietly shipping without them.
+SKIP_ICLOUD="${SKIP_ICLOUD:-0}"
+SKIP_SPARKLE="${SKIP_SPARKLE:-0}"
+
+if [ "$UNSIGNED" = "1" ]; then
+  CODESIGN_IDENTITY="-"
+  # An ad-hoc build has neither an entitlement for the container nor a key for the feed.
+  SKIP_ICLOUD=1
+  SKIP_SPARKLE=1
+else
+  : "${CODESIGN_IDENTITY:?set CODESIGN_IDENTITY to your Developer ID Application identity}"
+  [ "$SKIP_ICLOUD" = "1" ] \
+    || : "${ICLOUD_PROVISIONING_PROFILE:?set ICLOUD_PROVISIONING_PROFILE, or SKIP_ICLOUD=1 to build without iCloud Sync}"
+  [ "$SKIP_SPARKLE" = "1" ] \
+    || : "${SPARKLE_PUBLIC_KEY:?set SPARKLE_PUBLIC_KEY, or SKIP_SPARKLE=1 to build without auto-updates}"
+fi
 : "${OPENUSAGE_VERSION:?set OPENUSAGE_VERSION, e.g. 0.7.0}"
 
 APP_NAME="OpenUsage"
-BUNDLE_ID="com.robinebers.openusage"
+# Overridable so a fork can ship under its own identity instead of colliding with an installed
+# upstream OpenUsage (a shared bundle id means shared preferences, keychain grants, and update feed).
+BUNDLE_ID="${BUNDLE_ID:-com.robinebers.openusage}"
 MIN_SYSTEM_VERSION="15.0"
 VERSION="$OPENUSAGE_VERSION"
 # CFBundleShortVersionString carries the full version, including any pre-release suffix (e.g.
@@ -41,6 +72,7 @@ VERSION="$OPENUSAGE_VERSION"
 BUILD="${OPENUSAGE_BUILD:-$(git rev-list --count HEAD)}"
 FEED_URL="${FEED_URL:-https://robinebers.github.io/openusage/appcast.xml}"
 DMG_NAME="$APP_NAME-$VERSION.dmg"
+ZIP_NAME="$APP_NAME-$VERSION-unsigned-universal.zip"
 
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
@@ -51,6 +83,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 CLI_BINARY="$APP_HELPERS/openusage"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
+ZIP_PATH="$DIST_DIR/$ZIP_NAME"
 # dSYMs for crash symbolication (uploaded to PostHog by release.yml). A folder, since posthog-cli's
 # `dsym upload --directory` and Sparkle both want a directory of bundles, not a single path.
 DSYM_DIR="$DIST_DIR/dSYMs"
@@ -62,7 +95,9 @@ ENTITLEMENTS="$DIST_DIR/OpenUsage.release.resolved.entitlements.plist"
 # opt out with ALLOW_UNNOTARIZED=1 (the build will then be Gatekeeper-blocked on other Macs). Missing
 # creds without that opt-out is a hard error so CI never publishes an un-notarized DMG.
 NOTARIZE=0
-if [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_APP_PASSWORD:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ]; then
+if [ "$UNSIGNED" = "1" ]; then
+  echo "WARNING: UNSIGNED=1 — ad-hoc signature, no notarization. Other Macs will quarantine this build." >&2
+elif [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_APP_PASSWORD:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ]; then
   NOTARIZE=1
 elif [ "${ALLOW_UNNOTARIZED:-}" = "1" ]; then
   echo "WARNING: ALLOW_UNNOTARIZED=1 — build will NOT be notarized (other Macs will block it)." >&2
@@ -162,6 +197,34 @@ else
     --output-partial-info-plist /dev/null --output-format human-readable-text --errors --warnings
 fi
 
+# iCloud container declaration. Omitted when the build carries no iCloud entitlement, so the app does
+# not advertise a container it cannot open.
+if [ "$SKIP_ICLOUD" = "1" ]; then
+  ICLOUD_PLIST_KEYS=""
+else
+  ICLOUD_PLIST_KEYS="  <key>NSUbiquitousContainers</key>
+  <dict>
+    <key>iCloud.com.robinebers.openusage</key>
+    <dict>
+      <key>NSUbiquitousContainerIsDocumentScopePublic</key><false/>
+      <key>NSUbiquitousContainerName</key><string>OpenUsage</string>
+      <key>NSUbiquitousContainerSupportedFolderLevels</key><string>None</string>
+    </dict>
+  </dict>"
+fi
+
+# Sparkle keys. A build without them deliberately ships none: it has no EdDSA key to validate a feed
+# against, and pointing it at this repo's feed would silently auto-update a fork build into the
+# upstream app. UpdaterController keeps the updater dormant when SUFeedURL is absent.
+if [ "$SKIP_SPARKLE" = "1" ]; then
+  SPARKLE_PLIST_KEYS=""
+else
+  SPARKLE_PLIST_KEYS="  <key>SUFeedURL</key><string>$FEED_URL</string>
+  <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>"
+fi
+
 cat >"$APP_CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -180,39 +243,67 @@ cat >"$APP_CONTENTS/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>SUFeedURL</key><string>$FEED_URL</string>
-  <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
-  <key>SUEnableAutomaticChecks</key><true/>
-  <key>SUScheduledCheckInterval</key><integer>3600</integer>
-  <key>NSUbiquitousContainers</key>
-  <dict>
-    <key>iCloud.com.robinebers.openusage</key>
-    <dict>
-      <key>NSUbiquitousContainerIsDocumentScopePublic</key><false/>
-      <key>NSUbiquitousContainerName</key><string>OpenUsage</string>
-      <key>NSUbiquitousContainerSupportedFolderLevels</key><string>None</string>
-    </dict>
-  </dict>
+$SPARKLE_PLIST_KEYS
+$ICLOUD_PLIST_KEYS
 </dict>
 </plist>
 PLIST
 
-cp "$ICLOUD_PROVISIONING_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
-"$ROOT_DIR/script/render_icloud_entitlements.sh" \
-  "$ENTITLEMENTS_TEMPLATE" "$ICLOUD_PROVISIONING_PROFILE" "$ENTITLEMENTS" \
-  "iCloud.com.robinebers.openusage"
+if [ "$UNSIGNED" = "1" ]; then
+  # No provisioning profile and no iCloud entitlement — both need a Developer ID team, so iCloud Sync
+  # is unavailable in this build. Critically, the hardened runtime is NOT enabled either: it turns on
+  # library validation, which requires every loaded library to share the main binary's Team ID. Ad-hoc
+  # signatures have no Team ID, so a hardened ad-hoc app cannot load the ad-hoc Sparkle.framework —
+  # dyld refuses it with "different Team IDs" and the app dies at launch. --timestamp is dropped too
+  # (a secure timestamp needs a real identity).
+  echo "==> signing app (ad-hoc, no hardened runtime)"
+  "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" ""
+  codesign --force --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
+  # Not --deep: the Sparkle framework is signed above and must keep that signature.
+  codesign --force --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
-# Embed + sign Sparkle (Developer ID, hardened runtime, secure timestamp).
-"$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" "--options runtime --timestamp"
-codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
+  # Guard both halves of the failure above, because a signature that verifies can still be unlaunchable.
+  # 1. The runtime flag must be absent, or library validation comes back.
+  if codesign -d --verbose=2 "$APP_BUNDLE" 2>&1 | grep -q "flags=.*runtime"; then
+    echo "ad-hoc build has the hardened runtime enabled — it would fail to load Sparkle." >&2
+    exit 1
+  fi
+  # 2. Actually load the framework. The CLI helper links Sparkle through the same @rpath as the app, so
+  #    `--version` (no network, no GUI) fails here exactly when the app would die at launch in dyld.
+  echo "==> smoke-testing the embedded framework"
+  "$CLI_BINARY" --version >/dev/null \
+    || { echo "the staged CLI could not launch — check the Sparkle embedding/signature above." >&2; exit 1; }
+else
+  if [ "$SKIP_ICLOUD" = "1" ]; then
+    # No provisioning profile and no entitlements file: iCloud Sync is unavailable, but the signature
+    # is a real Developer ID one, so Gatekeeper, notarization, and library validation all behave.
+    ENTITLEMENTS=""
+  else
+    cp "$ICLOUD_PROVISIONING_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
+    "$ROOT_DIR/script/render_icloud_entitlements.sh" \
+      "$ENTITLEMENTS_TEMPLATE" "$ICLOUD_PROVISIONING_PROFILE" "$ENTITLEMENTS" \
+      "iCloud.com.robinebers.openusage"
+  fi
 
-echo "==> signing app (Developer ID, hardened runtime)"
-# Not --deep: the Sparkle framework is signed above and must keep that signature.
-codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
-  --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-codesign -d --entitlements :- "$APP_BUNDLE" 2>&1 | grep -q "iCloud.com.robinebers.openusage" \
-  || { echo "signed app is missing the production iCloud entitlement" >&2; exit 1; }
+  # Embed + sign Sparkle (Developer ID, hardened runtime, secure timestamp).
+  "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" "--options runtime --timestamp"
+  codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
+
+  echo "==> signing app (Developer ID, hardened runtime)"
+  # Not --deep: the Sparkle framework is signed above and must keep that signature.
+  if [ -n "$ENTITLEMENTS" ]; then
+    codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+      --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+  else
+    codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+  fi
+  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+  if [ "$SKIP_ICLOUD" != "1" ]; then
+    codesign -d --entitlements :- "$APP_BUNDLE" 2>&1 | grep -q "iCloud.com.robinebers.openusage" \
+      || { echo "signed app is missing the production iCloud entitlement" >&2; exit 1; }
+  fi
+fi
 
 # Notarize + staple the app itself (not just the DMG) so it launches cleanly even offline after a
 # Sparkle update extracts it from the disk image.
@@ -223,6 +314,19 @@ if [ "$NOTARIZE" = "1" ]; then
   notarize "$APP_ZIP"
   xcrun stapler staple "$APP_BUNDLE"
   rm -f "$APP_ZIP"
+fi
+
+if [ "$UNSIGNED" = "1" ]; then
+  echo "==> building $ZIP_PATH"
+  rm -f "$ZIP_PATH"
+  # ditto -c -k --keepParent is Apple's archiver: unlike `zip -r` it preserves the bundle's symlinks,
+  # extended attributes, and code signature, so the unpacked .app still verifies.
+  ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+  echo "==> done"
+  echo "    ZIP:  $ZIP_PATH (ad-hoc signed, NOT notarized)"
+  echo "    Install: unzip, move OpenUsage.app to /Applications, then clear the quarantine flag:"
+  echo "      xattr -dr com.apple.quarantine /Applications/$APP_NAME.app"
+  exit 0
 fi
 
 echo "==> building $DMG_PATH"

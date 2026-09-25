@@ -57,6 +57,8 @@ final class OpenCodeProvider: ProviderRuntime {
     let usageClient: OpenCodeUsageClient
     let usageScanner: OpenCodeUsageScanner
     let now: @Sendable () -> Date
+    private let hubConfiguration: @Sendable () throws -> SharedLimitsHubConfiguration?
+    private let hubClient: SharedLimitsHubClient
 
     /// Names the local source on hover (the dollars can only undercount true account usage — this
     /// machine only). No "(estimated)": OpenCode records its own per-message cost, so the values are
@@ -71,11 +73,17 @@ final class OpenCodeProvider: ProviderRuntime {
         authStore: OpenCodeAuthStore = OpenCodeAuthStore(),
         usageClient: OpenCodeUsageClient = OpenCodeUsageClient(),
         usageScanner: OpenCodeUsageScanner = OpenCodeUsageScanner(),
+        hubConfiguration: @escaping @Sendable () throws -> SharedLimitsHubConfiguration? = {
+            try SharedLimitsHubConfiguration.load(providerID: "opencode")
+        },
+        hubClient: SharedLimitsHubClient = SharedLimitsHubClient(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.usageScanner = usageScanner
+        self.hubConfiguration = hubConfiguration
+        self.hubClient = hubClient
         self.now = now
     }
 
@@ -99,10 +107,19 @@ final class OpenCodeProvider: ProviderRuntime {
     }
 
     func hasLocalCredentials() async -> Bool {
+        // The hub listing is a credential in its own right: a hub-configured install tracks its Go
+        // meters even when this Mac has no local `opencode-go` key (the hub holds the account
+        // session). Same visibility rule as Muse: configured-but-broken keeps the provider on so
+        // `refresh()` can explain the error.
+        do {
+            if try await loadOffMainActor(hubConfiguration) != nil { return true }
+        } catch {
+            return true
+        }
         // Same sources as `refresh()`: the local `opencode-go` auth key, or any hosted usage already in
         // the local database. Local-only, off the main actor. An unreadable auth.json is itself an
         // OpenCode footprint — enable the provider so `refresh()` can surface the actionable error.
-        await loadOffMainActor { [authStore, usageScanner] in
+        return await loadOffMainActor { [authStore, usageScanner] in
             do {
                 if try authStore.goAPIKey() != nil { return true }
             } catch {
@@ -134,16 +151,39 @@ final class OpenCodeProvider: ProviderRuntime {
 
         var meterLines: [MetricLine] = []
         var plan: String?
-        if let goKey {
-            switch await fetchGoMeters(apiKey: goKey) {
-            case .meters(let lines):
-                meterLines = lines
-                plan = "Go"
-            case .noSubscription:
-                AppLog.info(LogTag.plugin("opencode"), "Go usage endpoint: no active subscription")
-            case .failed(let error):
-                return ProviderSnapshot.error(provider: provider, error: error)
+        var meterFetchedAt: Date?
+        var meterWarning: String?
+
+        // Hub-configured: the Go windows come exclusively from the shared hub (no opencode.ai call —
+        // the hub is the fresher, account-wide source the user opted into). A hub failure warns and
+        // keeps whatever local data this Mac still has.
+        do {
+            if let config = try await loadOffMainActor(hubConfiguration) {
+                do {
+                    let quota = try await hubClient.fetch(providerID: "opencode", configuration: config, now: refreshedAt)
+                    meterLines = quota.lines()
+                    meterFetchedAt = quota.fetchedAt
+                    plan = "Go"
+                    if meterLines.count != 3 { meterWarning = SharedLimitsHubError.noData.localizedDescription }
+                } catch let error as SharedLimitsHubError {
+                    AppLog.warn(LogTag.plugin("opencode"), "shared hub quota unavailable: \(error.localizedDescription)")
+                    meterWarning = error.localizedDescription
+                }
+            } else if let goKey {
+                switch await fetchGoMeters(apiKey: goKey) {
+                case .meters(let lines):
+                    meterLines = lines
+                    plan = "Go"
+                case .noSubscription:
+                    AppLog.info(LogTag.plugin("opencode"), "Go usage endpoint: no active subscription")
+                case .failed(let error):
+                    return ProviderSnapshot.error(provider: provider, error: error)
+                }
             }
+        } catch {
+            // The config file exists but is broken: fail loudly rather than silently routing to
+            // opencode.ai, which would hide the misconfiguration.
+            return ProviderSnapshot.error(provider: provider, error: error)
         }
 
         let scan: OpenCodeUsageScan?
@@ -173,10 +213,13 @@ final class OpenCodeProvider: ProviderRuntime {
         }
 
         if lines.isEmpty {
-            if goKey != nil {
+            if meterWarning != nil {
+                // Hub-configured with no local data either: honest "No data" plus the hub warning,
+                // not a fabricated sign-in error — the hub is the configured credential here.
+                MetricLine.appendNoDataIfNeeded(&lines)
+            } else if goKey != nil {
                 return ProviderSnapshot.error(provider: provider, error: OpenCodeUsageError.noGoSubscription)
-            }
-            if scan == nil {
+            } else if scan == nil {
                 return ProviderSnapshot.error(
                     provider: provider, error: authReadError ?? OpenCodeUsageError.notLoggedIn
                 )
@@ -188,14 +231,15 @@ final class OpenCodeProvider: ProviderRuntime {
             provider: provider,
             plan: plan,
             lines: lines,
-            refreshedAt: refreshedAt,
+            refreshedAt: meterFetchedAt ?? refreshedAt,
             usageHistory: scan.map {
                 ProviderUsageHistory(
                     series: $0.logScan.series,
                     modelUsage: $0.logScan.modelUsage,
                     unknownModelsByDay: $0.logScan.unknownModelsByDay
                 )
-            }
+            },
+            warning: meterWarning
         )
     }
 

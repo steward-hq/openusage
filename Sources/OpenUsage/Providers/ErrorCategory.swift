@@ -256,6 +256,14 @@ extension ZAIUsageError: CategorizedError {
     }
 }
 
+extension SyntheticUsageError: CategorizedError {
+    var errorCategory: ErrorCategory {
+        switch self {
+        case .notConfigured: .notLoggedIn
+        }
+    }
+}
+
 extension HTTPClientError: CategorizedError {
     var errorCategory: ErrorCategory {
         switch self {

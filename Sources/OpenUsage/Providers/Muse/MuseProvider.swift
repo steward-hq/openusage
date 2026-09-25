@@ -125,7 +125,7 @@ final class MuseProvider: ProviderRuntime {
             if let config = try await loadOffMainActor(hubConfiguration) {
                 dashboardSessionExists = true
                 let quota = try await hubClient.fetch(providerID: "muse", configuration: config, now: refreshedAt)
-                quotaLines = quota.lines
+                quotaLines = quota.lines()
                 quotaFetchedAt = quota.fetchedAt
                 if quotaLines.count != 2 { quotaWarning = SharedLimitsHubError.noData.localizedDescription }
             } else {

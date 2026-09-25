@@ -29,13 +29,15 @@ enum DefaultLayout {
 
         "muse.session", "muse.weekly", "muse.trend", "muse.today", "muse.yesterday", "muse.last30",
 
-        "ollama.session", "ollama.weekly", "ollama.last4Weeks",
+        "ollama.monthly", "ollama.last4Weeks",
 
         "opencode.session", "opencode.weekly", "opencode.monthly", "opencode.trend",
         "opencode.today", "opencode.yesterday", "opencode.last30",
 
         "openrouter.credits", "openrouter.balance",
         "openrouter.today", "openrouter.week", "openrouter.month", "openrouter.keyLimit",
+
+        "synthetic.session", "synthetic.weekly",
 
         "zai.session", "zai.weekly", "zai.webSearches"
     ]
@@ -70,8 +72,9 @@ enum DefaultLayout {
         "cursor.auto", "cursor.api",
         "copilot.premium",
         "muse.session", "muse.weekly",
-        "ollama.session", "ollama.weekly",
+        "ollama.monthly",
         "openrouter.credits",
+        "synthetic.session", "synthetic.weekly",
         "zai.session", "zai.weekly"
     ]
 
@@ -113,6 +116,8 @@ enum DefaultLayout {
         // OpenRouter: Credits meter + Balance stay above the fold; period spend and the per-key cap
         // sit below the caret.
         "openrouter.today", "openrouter.week", "openrouter.month", "openrouter.keyLimit",
+        // Synthetic: both quota meters stay above the fold (and both are default-pinned); the
+        // provider has no other rows.
         // Z.ai: Session meter stays above the fold; Web Searches (monthly count) sits below the caret.
         "zai.webSearches"
     ]

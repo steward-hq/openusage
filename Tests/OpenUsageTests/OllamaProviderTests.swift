@@ -21,11 +21,13 @@ private func ok(_ json: String) -> HTTPResponse {
 /// different outcomes — the case a single canned `FakeHTTPClient` response cannot express.
 private final class RoutedHTTPClient: HTTPClient, @unchecked Sendable {
     private let responses: [String: HTTPResponse]
+    private(set) var requestCount = 0
 
     init(_ responses: [String: HTTPResponse]) { self.responses = responses }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        responses[request.url.path] ?? HTTPResponse(statusCode: 404, headers: [:], body: Data())
+        requestCount += 1
+        return responses[request.url.path] ?? HTTPResponse(statusCode: 404, headers: [:], body: Data())
     }
 }
 
@@ -240,10 +242,27 @@ final class OllamaUsageMapperTests: XCTestCase {
     }
 
     func testMetricLabelsMatchTheProvidersWidgetDescriptors() async throws {
-        let mapped = try OllamaUsageMapper.map(usageBody: data(usageJSON), accountBody: nil)
+        let json = #"""
+        {"activity":{"cost":"1.25"},"limits":{"monthly":{"usage":0.15}}}
+        """#
+        let mapped = try OllamaUsageMapper.map(usageBody: data(json), accountBody: nil)
         let labels = await MainActor.run { OllamaProvider().widgetDescriptors.map(\.metricLabel) }
 
-        XCTAssertEqual(mapped.lines.map(\.label), labels)
+        XCTAssertEqual(labels, ["Monthly", "Last 4 Weeks"])
+        XCTAssertTrue(Set(mapped.lines.map(\.label)).isSubset(of: Set(labels)))
+    }
+
+    func testMapsMonthlyLimitWhenPresent() throws {
+        let json = #"""
+        {"activity":{"cost":"0.00"},"limits":{"monthly":{"usage":0.15}}}
+        """#
+        let mapped = try OllamaUsageMapper.usageLines(data(json))
+        XCTAssertEqual(mapped.map(\.label), ["Monthly", "Last 4 Weeks"])
+        guard case .progress(let label, let used, _, _, _, _, _)? = mapped.first else {
+            return XCTFail("expected a Monthly progress line")
+        }
+        XCTAssertEqual(label, "Monthly")
+        XCTAssertEqual(used, 15.0, accuracy: 0.001)
     }
 
     func testMissingLimitsIsALoudFailureRatherThanAnEmptyDashboard() {
@@ -281,7 +300,8 @@ final class OllamaProviderRefreshTests: XCTestCase {
         let http = FakeHTTPClient(response: ok(usageJSON))
         let provider = OllamaProvider(
             authStore: OllamaAuthStore(files: FakeFiles()),
-            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) })
+            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) }),
+            hubConfiguration: { nil }
         )
 
         let snapshot = await provider.refresh()
@@ -374,7 +394,103 @@ final class OllamaProviderRefreshTests: XCTestCase {
     private func makeProvider(http: any HTTPClient) -> OllamaProvider {
         OllamaProvider(
             authStore: OllamaAuthStore(files: FakeFiles([OllamaAuthStore.keyPath: testPrivateKeyPEM])),
-            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) })
+            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) }),
+            hubConfiguration: { nil }
         )
+    }
+
+    // MARK: - Shared hub path
+
+    /// `hubConfiguration: { nil }` on every direct-path test keeps them hermetic: the default closure
+    /// reads the real `~/.openusage/limits-hub.json`, which would silently reroute these tests
+    /// through the hub on a machine whose config lists ollama.
+    private let hubConfig = SharedLimitsHubConfiguration(
+        snapshotURL: URL(string: "https://hub.example/snapshot.json")!, providers: ["ollama"]
+    )
+
+    private func hubPayload(_ fields: String) -> Data {
+        Data("{\"providers\":{\"ollama\":{\"status\":\"ok\",\"fetched_at\":\"\(ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 0)))\",\(fields)}}}".utf8)
+    }
+
+    private func hubProvider(http: any HTTPClient, key: String? = testPrivateKeyPEM) -> OllamaProvider {
+        OllamaProvider(
+            authStore: OllamaAuthStore(files: FakeFiles(key.map { [OllamaAuthStore.keyPath: $0] } ?? [:])),
+            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) }),
+            hubConfiguration: { [hubConfig] in hubConfig },
+            hubClient: SharedLimitsHubClient(http: FakeHTTPClient(
+                response: HTTPResponse(statusCode: 200, headers: [:], body: hubPayload(
+                    #""monthly_percent":34.9,"plan_type":"max""#
+                ))
+            )),
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+    }
+
+    func testHubMetersReplaceTheDirectQuotaCallAndKeepTheSpendRow() async {
+        // The direct client answers only the spend row's `/api/usage` call, so its request count
+        // proves the meters did not come from ollama.com.
+        let direct = RoutedHTTPClient([OllamaUsageClient.usagePath: ok(usageJSON)])
+        let provider = hubProvider(http: direct)
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertEqual(direct.requestCount, 1)
+        XCTAssertEqual(snapshot.plan, "Max")
+        XCTAssertEqual(snapshot.lines.map(\.label), ["Monthly", "Last 4 Weeks"])
+        XCTAssertNil(snapshot.errorCategory)
+        XCTAssertNil(snapshot.warning)
+        guard case .progress(let label, let used, _, _, _, _, _)? = snapshot.line(label: "Monthly") else {
+            return XCTFail("expected a Monthly meter from the hub")
+        }
+        XCTAssertEqual(label, "Monthly")
+        XCTAssertEqual(used, 34.9, accuracy: 0.0001)
+    }
+
+    func testHubFailureWarnsWithoutFallingBackToOllamaDotCom() async {
+        // The hub answers 503; a routed direct client still serves the spend row, proving the
+        // quota meters did NOT fall back to ollama.com while the spend row survives.
+        let direct = RoutedHTTPClient([OllamaUsageClient.usagePath: ok(usageJSON)])
+        let provider = OllamaProvider(
+            authStore: OllamaAuthStore(files: FakeFiles([OllamaAuthStore.keyPath: testPrivateKeyPEM])),
+            usageClient: OllamaUsageClient(http: direct, now: { Date(timeIntervalSince1970: 0) }),
+            hubConfiguration: { [hubConfig] in hubConfig },
+            hubClient: SharedLimitsHubClient(http: FakeHTTPClient(
+                response: HTTPResponse(statusCode: 503, headers: [:], body: Data())
+            )),
+            now: { Date(timeIntervalSince1970: 0) }
+        )
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertEqual(direct.requestCount, 1)
+        XCTAssertNil(snapshot.line(label: "Session"))
+        XCTAssertNil(snapshot.line(label: "Weekly"))
+        XCTAssertEqual(snapshot.lines.map(\.label), ["Last 4 Weeks"])
+        XCTAssertEqual(snapshot.warning, SharedLimitsHubError.http(503).localizedDescription)
+        XCTAssertNil(snapshot.errorCategory)
+    }
+
+    func testHubListingIsACredentialThatEnablesTheProvider() async {
+        let configured = hubProvider(http: FakeHTTPClient(response: ok(usageJSON)))
+        let unconfigured = OllamaProvider(
+            authStore: OllamaAuthStore(files: FakeFiles([OllamaAuthStore.keyPath: testPrivateKeyPEM])),
+            usageClient: OllamaUsageClient(http: FakeHTTPClient(response: ok(usageJSON))),
+            hubConfiguration: { nil }
+        )
+        let broken = OllamaProvider(
+            authStore: OllamaAuthStore(files: FakeFiles()),
+            usageClient: OllamaUsageClient(http: FakeHTTPClient(response: ok(usageJSON))),
+            hubConfiguration: { throw SharedLimitsHubError.configuration }
+        )
+
+        let withHub = await configured.hasLocalCredentials()
+        let withoutHub = await unconfigured.hasLocalCredentials()
+        let withBrokenConfig = await broken.hasLocalCredentials()
+
+        XCTAssertTrue(withHub)
+        // Without a hub listing the signing key alone still can't prove an account link.
+        XCTAssertFalse(withoutHub)
+        // Broken configuration keeps the provider visible to explain the error.
+        XCTAssertTrue(withBrokenConfig)
     }
 }

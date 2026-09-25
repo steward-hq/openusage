@@ -113,8 +113,10 @@ For bounded progress resources, `unit` follows the provider's live metric format
 | Devin | `daily`, `weekly`, `extraUsageBalance` |
 | Grok | `weekly` |
 | Muse Code | `session`, `weekly` |
+| Ollama | `monthly` |
 | OpenCode | `session`, `weekly`, `monthly` |
 | OpenRouter | `credits`, `balance`, `keyLimit` |
+| Synthetic | `session`, `weekly` |
 | Z.ai | `session`, `weekly`, `webSearches` |
 
 Charts, colors, subtitles, formatted badges, layout state, and historical spend periods stay out of this

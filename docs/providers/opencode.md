@@ -20,6 +20,26 @@ The Session / Weekly / Monthly meters are **account-wide** — the same percents
 shows, including usage from other machines. If you only use the Zen pay-as-you-go gateway (no Go
 subscription), the cap meters are hidden and you'll just see the spend tiles.
 
+## Shared limits hub (optional)
+
+To use the same Go meters as AI Limits on your phone, add `"opencode"` to
+`~/.openusage/limits-hub.json` (see [Muse Code](muse.md#shared-limits-hub-optional) for the full
+config shape and freshness rules):
+
+```json
+{
+  "snapshotURL": "https://your-hub.example:4401/snapshot.json",
+  "providers": ["opencode"],
+  "resetTimeZone": "UTC"
+}
+```
+
+Once configured, the Session / Weekly / Monthly meters come exclusively from the hub — OpenUsage
+does not call opencode.ai for them, and no local Go key is needed on this Mac (the hub holds the
+account session; the "Go" plan badge still shows). The local spend tiles and usage trend keep
+working as usual. A hub failure shows a warning while the local tiles continue. The hub listing
+also turns the provider on automatically, even without a local key.
+
 ## Where credentials come from
 
 Use OpenCode as usual. OpenUsage reads the `opencode-go` API key from OpenCode's local data directory
@@ -57,6 +77,8 @@ usage reads "No data" rather than a misleading `$0.00`. No log data leaves your 
 - **"Couldn't read OpenCode's local database"** — the database (or data directory) exists but couldn't be
   read this refresh. If you're on Go, the percent meters still refresh; quit OpenCode and refresh to
   restore the tiles. If it persists, check the permissions on `~/.local/share/opencode`.
+- **Shared hub warning** — check Tailscale and the hub collector. Renew the browser session on the hub
+  if it reports `needs-session`; re-logging into OpenCode on this Mac does not update the hub.
 
 ## Under the hood
 

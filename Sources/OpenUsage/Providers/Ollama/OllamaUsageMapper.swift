@@ -45,6 +45,9 @@ enum OllamaUsageMapper {
         if let weekly = percentLine(limits["weekly"], label: "Weekly") {
             lines.append(weekly)
         }
+        if let monthly = percentLine(limits["monthly"], label: "Monthly") {
+            lines.append(monthly)
+        }
         if let activity = activityLine(root["activity"]) {
             lines.append(activity)
         }

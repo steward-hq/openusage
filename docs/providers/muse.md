@@ -40,9 +40,9 @@ Data older than 30 minutes is unavailable until the hub collector updates it.
 Each person runs their own hub: the snapshot reports one browser session's quotas, so point
 `snapshotURL` at your own collector. Hubs serve port `4477`; the URL is used exactly as written.
 
-Only Muse opts into this shared client today. Its HTTPS transport, provider selection, configuration,
-and freshness checks can be reused when adding other providers; adding a name alone does not migrate
-a provider. No Meta credentials or local logs are sent to the hub by OpenUsage.
+Muse shares this client with Ollama, OpenCode, and Synthetic — add each provider you want to the
+`providers` list. Ollama Cloud and OpenCode Go then read their meters from the hub too, and
+Synthetic is hub-only. No Meta credentials or local logs are sent to the hub by OpenUsage.
 
 ## Local dashboard access (when no hub is configured)
 

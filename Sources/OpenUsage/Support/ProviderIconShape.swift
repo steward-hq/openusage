@@ -104,6 +104,7 @@ enum ProviderMarks {
         case "ollama": return "cloud"
         case "opencode": return "chevron.left.forwardslash.chevron.right"
         case "openrouter": return "point.3.connected.trianglepath.dotted"
+        case "synthetic": return "waveform.path.ecg"
         case "zai": return "z.signal"
         default: return "app.dashed"
         }

@@ -44,23 +44,37 @@ enum SharedLimitsHubError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Common session/weekly quota shape; other providers can add their own mapper for different fields.
+/// Common session/weekly/monthly quota shape; other providers can add their own mapper for different fields.
 struct SharedLimitsHubQuota: Sendable {
+    var plan: String? = nil
     var sessionPercent: Double?
     var weeklyPercent: Double?
+    var monthlyPercent: Double?
     var sessionReset: Date?
     var weeklyReset: Date?
+    var monthlyReset: Date?
     var fetchedAt: Date
 
-    var lines: [MetricLine] {
+    /// The percent meters, in session → weekly → monthly order. `withPeriods: false` drops the
+    /// window-length cadence (`periodDurationMs`): a provider that publishes no window start
+    /// (Ollama) would otherwise render a static "Resets in 5h" that reads like a live countdown —
+    /// see `OllamaUsageMapper`.
+    func lines(withPeriods: Bool = true) -> [MetricLine] {
         var lines: [MetricLine] = []
         if let used = sessionPercent {
             lines.append(.progress(label: "Session", used: used, limit: 100, format: .percent,
-                                   resetsAt: sessionReset, periodDurationMs: MetricPeriod.sessionMs))
+                                   resetsAt: sessionReset,
+                                   periodDurationMs: withPeriods ? MetricPeriod.sessionMs : nil))
         }
         if let used = weeklyPercent {
             lines.append(.progress(label: "Weekly", used: used, limit: 100, format: .percent,
-                                   resetsAt: weeklyReset, periodDurationMs: MetricPeriod.weekMs))
+                                   resetsAt: weeklyReset,
+                                   periodDurationMs: withPeriods ? MetricPeriod.weekMs : nil))
+        }
+        if let used = monthlyPercent {
+            lines.append(.progress(label: "Monthly", used: used, limit: 100, format: .percent,
+                                   resetsAt: monthlyReset,
+                                   periodDurationMs: withPeriods ? MetricPeriod.monthMs : nil))
         }
         return lines
     }
@@ -106,10 +120,16 @@ struct SharedLimitsHubClient: Sendable {
             guard let value = ProviderParse.number(provider[key]), (0...100).contains(value) else { return nil }
             return value
         }
+        let rawPlan = (provider["plan_type"] ?? provider["plan"]) as? String
+        let plan = rawPlan?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty?.capitalized
         return SharedLimitsHubQuota(
-            sessionPercent: percent("session_percent"), weeklyPercent: percent("weekly_percent"),
-            sessionReset: resetDate(provider["session_reset"] as? String, at: fetchedAt, timeZone: resetTimeZone),
+            plan: plan,
+            sessionPercent: percent("session_percent") ?? percent("request_percent"),
+            weeklyPercent: percent("weekly_percent"),
+            monthlyPercent: percent("monthly_percent"),
+            sessionReset: resetDate((provider["session_reset"] ?? provider["request_reset"]) as? String, at: fetchedAt, timeZone: resetTimeZone),
             weeklyReset: resetDate(provider["weekly_reset"] as? String, at: fetchedAt, timeZone: resetTimeZone),
+            monthlyReset: resetDate(provider["monthly_reset"] as? String, at: fetchedAt, timeZone: resetTimeZone),
             fetchedAt: fetchedAt
         )
     }

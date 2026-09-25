@@ -1,25 +1,22 @@
 # Ollama
 
-Tracks [Ollama Cloud](https://ollama.com) subscription usage — the session and weekly limits Ollama
+Tracks [Ollama Cloud](https://ollama.com) subscription usage — the monthly credit limit and recent spend Ollama
 shows on its own settings page.
 
 ## What it tracks
 
 | Metric | Meaning |
 |---|---|
-| Session | 5-hour window usage (percentage of your plan's allowance) |
-| Weekly | 7-day window usage (percentage of your plan's allowance) |
+| Monthly | Percentage of your plan's monthly included credit allowance used, with its renewal date |
 | Last 4 Weeks | Charges beyond your plan over the last four weeks. $0.00 on a subscription; real amounts for pay-as-you-go and API-key usage |
 
 Your plan (Free, Pro, Max) is shown beside the provider name.
 
-Session and Weekly are always visible and start pinned to the menu bar. Last 4 Weeks sits behind the
+Monthly is always visible and starts pinned to the menu bar. Last 4 Weeks sits behind the
 provider's caret — you can move any of them in **Customize**. A $0.00 on that row means no extra charges,
-not an idle month: everything inside your plan's allowance is already counted by Session and Weekly.
+not an idle month: usage inside your plan's allowance is counted by the Monthly meter.
 
-The session window is 5 hours and the weekly window is 7 days, but Ollama reports only how much of each
-window you have used — never when the current one started or ends. These meters therefore show no reset
-countdown, rather than a guessed one. Local models don't count toward either limit; only cloud models do.
+Local models don't count toward the limit; only cloud models do.
 
 ## Where credentials come from
 
@@ -28,9 +25,11 @@ Nothing to paste. Ollama creates a signing key at `~/.ollama/id_ed25519` the fir
 with it exactly as the Ollama CLI does, and never sends the key anywhere — only the signature goes out.
 
 Because that key exists whether or not you've signed in, OpenUsage can tell only that Ollama is
-installed — not that Ollama Cloud is set up. So Ollama never switches itself on, even when the key is
-there: if you use Ollama for local models alone, it stays out of your way instead of showing you a
-sign-in warning for a product you don't use. Turn it on in **Customize** when you want it.
+installed — not that Ollama Cloud is set up. So on its own the key never switches Ollama on: if you
+use Ollama for local models alone, it stays out of your way instead of showing you a sign-in
+warning for a product you don't use. The one thing that does enable it is a listing in your
+[shared limits hub](#shared-limits-hub-optional) — the hub collector only publishes providers
+whose account session it holds. Otherwise, turn it on in **Customize** when you want it.
 
 ## Setup
 
@@ -43,7 +42,28 @@ ollama signin
 
 3. Turn **Ollama** on in **Customize** — unlike most providers, it never enables itself (see above).
 
-Session and Weekly then appear on the dashboard and in the menu bar on the next refresh.
+Monthly and Last 4 Weeks then appear on the dashboard and Monthly in the menu bar on the next refresh.
+
+## Shared limits hub (optional)
+
+To use the same Ollama Cloud quotas as AI Limits on your phone, add `"ollama"` to
+`~/.openusage/limits-hub.json` (see [Muse Code](muse.md#shared-limits-hub-optional) for the
+full config shape and freshness rules):
+
+```json
+{
+  "snapshotURL": "https://your-hub.example:4401/snapshot.json",
+  "providers": ["ollama"],
+  "resetTimeZone": "UTC"
+}
+```
+
+Once configured, the Monthly meter comes exclusively from the hub — OpenUsage does not
+fall back to ollama.com for it, and no plan badge appears (the hub doesn't publish it). The
+Last 4 Weeks spend row still comes from the signed ollama.com API when your local key is available,
+because recent activity spend isn't a quota the hub publishes. A hub failure shows a warning with
+whatever the spend row can still offer; Ollama listing itself in the hub also turns the provider
+on automatically.
 
 ## Under the hood
 
@@ -71,3 +91,5 @@ at all is reported as an invalid response.
   permissions (it should be owned by you, mode `600`).
 - **Meters show "No usage data"** — you're signed in, but Ollama returned no limits for the account yet.
   Check your usage at [ollama.com/settings](https://ollama.com/settings).
+- **Shared hub warning** — check Tailscale and the hub collector. Renew the browser session on the hub
+  if it reports `needs-session`; signing in on this Mac does not update the hub.
